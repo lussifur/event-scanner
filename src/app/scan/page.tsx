@@ -4,13 +4,14 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
-// Load Scanner only on client side
+// Load Scanner only on client side to prevent server errors
 const Scanner = dynamic(
   () => import('@yudiel/react-qr-scanner').then((mod) => mod.Scanner),
   { ssr: false }
 )
 
 export default function ScannerPage() {
+  // --- STATE MANAGEMENT ---
   const [adminName, setAdminName] = useState('')
   const [pin, setPin] = useState('') 
   const [authorized, setAuthorized] = useState(false)
@@ -21,7 +22,7 @@ export default function ScannerPage() {
   const [detectedUser, setDetectedUser] = useState<any>(null)
   const [statusMessage, setStatusMessage] = useState('')
 
-  // 1. LOGIN
+  // 1. LOGIN HANDLER
   const handleLogin = () => {
     if (pin === '1234') { 
         if (!adminName.trim()) return alert("Please enter your name first.")
@@ -31,16 +32,17 @@ export default function ScannerPage() {
     }
   }
 
-  // 2. SCAN QR
+  // 2. SCAN DETECTED
   const onScan = async (result: any) => {
     if (!result || !result[0]) return
     const id = result[0].rawValue
 
+    // Prevent duplicate scans while modal is open
     if (showVenueModal || scannedId === id) return 
 
-    console.log("📸 Scanned:", id)
+    console.log("📸 Scanned ID:", id)
     setScannedId(id)
-    setStatusMessage('🔍 Searching...')
+    setStatusMessage('🔍 Searching Database...')
     
     // Fetch User AND their current Status
     const { data, error } = await supabase
@@ -61,13 +63,13 @@ export default function ScannerPage() {
     setStatusMessage('✅ Verify Identity')
   }
 
-  // 3. TOGGLE IN / OUT
+  // 3. PROCESS SCAN (TOGGLE IN/OUT)
   const processScan = async () => {
     if (!scannedId) return
 
     // --- TOGGLE LOGIC ---
-    // If 'checked_in' -> Switch to 'checked_out'
-    // If 'checked_out' or NULL -> Switch to 'checked_in'
+    // If status is 'checked_in' -> Switch to 'checked_out'
+    // If status is 'checked_out' (or null) -> Switch to 'checked_in'
     const isInside = detectedUser.status === 'checked_in'
     const newStatus = isInside ? 'checked_out' : 'checked_in'
     const typeLabel = isInside ? 'OUT' : 'IN'
@@ -75,25 +77,25 @@ export default function ScannerPage() {
     setShowVenueModal(false)
     setStatusMessage('⏳ Saving...')
 
-    // Time String (Now compatible with the TEXT column)
+    // Generate IST Time as a String (Avoids timestamp errors)
     const istNow = new Date().toLocaleString("en-IN", { 
         timeZone: "Asia/Kolkata",
         day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
     })
     
-    // A. Update Status in Attendees Table
+    // A. Update Status in Main Table
     const { error: updateError } = await supabase
         .from('attendees')
         .update({ 
             status: newStatus, 
             last_scanned_by: adminName, 
-            last_scanned_at: istNow // sending Text
+            last_scanned_at: istNow 
         })
         .eq('id', scannedId)
 
     if (updateError) {
         console.error("Update Failed:", updateError)
-        alert("Error updating database. Check console.")
+        alert("Database Error: Could not update status.")
         return
     }
 
@@ -108,10 +110,10 @@ export default function ScannerPage() {
         scanned_at: istNow
     }])
 
-    // C. Success Message
+    // C. Success Feedback
     setStatusMessage(isInside ? `👋 CHECK-OUT SUCCESS: ${detectedUser.name}` : `✅ CHECK-IN SUCCESS: ${detectedUser.name}`)
     
-    // D. Reset
+    // D. Reset for next scan
     setVenue('') 
     setDetectedUser(null)
     setTimeout(() => { 
@@ -120,7 +122,7 @@ export default function ScannerPage() {
     }, 3000)
   }
 
-  // --- UI: LOGIN (Fixed Visibility) ---
+  // --- UI: LOGIN SCREEN (Fixed Visibility) ---
   if (!authorized) return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 text-white p-6 relative">
           <Link href="/" className="absolute top-6 left-6 text-gray-400 hover:text-white font-bold text-lg">← Back</Link>
@@ -129,7 +131,6 @@ export default function ScannerPage() {
           <div className="w-full max-w-xs space-y-6">
             <div>
               <label className="block text-gray-300 mb-2 text-sm font-bold uppercase">Volunteer Name</label>
-              {/* Added bg-white and text-black to make it readable */}
               <input 
                 className="w-full p-4 rounded-lg text-black font-bold bg-white outline-none focus:ring-4 ring-blue-500" 
                 placeholder="Ex: John Doe" 
@@ -140,7 +141,6 @@ export default function ScannerPage() {
             
             <div>
               <label className="block text-gray-300 mb-2 text-sm font-bold uppercase">Access PIN</label>
-              {/* Added bg-white and text-black here too */}
               <input 
                 type="password" 
                 className="w-full p-4 rounded-lg text-black font-bold bg-white outline-none tracking-widest focus:ring-4 ring-blue-500" 
@@ -160,13 +160,17 @@ export default function ScannerPage() {
       </div>
   )
 
+  // --- UI: SCANNER SCREEN ---
   return (
     <div className="min-h-screen bg-black text-white flex flex-col items-center p-4 relative">
+      
+      {/* Header */}
       <div className="w-full flex justify-between mb-4 items-center max-w-sm">
         <span className="text-gray-400 text-sm">Operator: <span className="text-white font-bold">{adminName}</span></span>
         <button onClick={() => setAuthorized(false)} className="text-red-400 text-xs border border-red-900 px-3 py-1 rounded hover:bg-red-900">Logout</button>
       </div>
 
+      {/* Camera Window */}
       <div className="w-full max-w-sm aspect-square border-4 border-gray-700 rounded-xl overflow-hidden relative bg-black shadow-2xl">
         {!showVenueModal && (
             <Scanner onScan={onScan} styles={{ container: { width: '100%', height: '100%' } }} />
@@ -201,8 +205,8 @@ export default function ScannerPage() {
                   onClick={processScan} 
                   className={`w-full text-white font-bold py-4 rounded-lg text-lg shadow-lg transition-all mb-3 ${
                       detectedUser.status === 'checked_in' 
-                      ? 'bg-red-600 hover:bg-red-500' 
-                      : 'bg-green-600 hover:bg-green-500'
+                      ? 'bg-red-600 hover:bg-red-500' // Show RED EXIT Button if IN
+                      : 'bg-green-600 hover:bg-green-500' // Show GREEN ENTRY Button if OUT
                   }`}
                 >
                   {detectedUser.status === 'checked_in' ? '🛑 VERIFY & CHECK OUT' : '✅ VERIFY & CHECK IN'}
@@ -213,6 +217,7 @@ export default function ScannerPage() {
         </div>
       )}
 
+      {/* STATUS BANNER */}
       <div className={`mt-6 w-full max-w-sm p-4 rounded-xl text-center font-bold text-lg border-2 ${
          statusMessage.includes('SUCCESS') ? 'bg-green-900/90 border-green-500 text-green-100' : 
          statusMessage.includes('Error') || statusMessage.includes('Invalid') ? 'bg-red-900/90 border-red-500 text-red-100' :
