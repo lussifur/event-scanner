@@ -1,139 +1,225 @@
 'use client'
 import { useState } from 'react'
-import dynamic from 'next/dynamic' // 1. Import dynamic
+import dynamic from 'next/dynamic'
+import Link from 'next/link'
 import { supabase } from '@/lib/supabase'
 
-// 2. Load the Scanner ONLY on the client (browser)
-// This fixes the error by preventing the server from trying to load the camera
+// Load Scanner only on client side
 const Scanner = dynamic(
   () => import('@yudiel/react-qr-scanner').then((mod) => mod.Scanner),
   { ssr: false }
 )
 
 export default function ScannerPage() {
+  const [adminName, setAdminName] = useState('')
+  const [pin, setPin] = useState('') 
   const [authorized, setAuthorized] = useState(false)
-  const [pin, setPin] = useState('')
-  const [scanResult, setScanResult] = useState<string | null>(null)
+   
+  const [scannedId, setScannedId] = useState<string | null>(null)
+  const [venue, setVenue] = useState('')
+  const [showVenueModal, setShowVenueModal] = useState(false)
+  const [detectedUser, setDetectedUser] = useState<any>(null)
   const [statusMessage, setStatusMessage] = useState('')
 
-  // 1. PIN CHECK
-  const checkPin = () => {
-    if (pin === process.env.NEXT_PUBLIC_ADMIN_PIN) {
-      setAuthorized(true)
+  // 1. LOGIN
+  const handleLogin = () => {
+    if (pin === '1234') { 
+        if (!adminName.trim()) return alert("Please enter your name first.")
+        setAuthorized(true)
     } else {
-      alert('Wrong PIN')
+        alert('Wrong PIN')
     }
   }
 
-  // 2. SCAN HANDLER
-  const handleScan = async (text: string) => {
-    // Prevent duplicate scans of the same code immediately
-    if (text && text !== scanResult) {
-      setScanResult(text) // Lock this ID so we don't scan it twice in 1 second
-      setStatusMessage('Checking database...')
-      
-      // Check Supabase for this ID
-      const { data, error } = await supabase
+  // 2. SCAN QR
+  const onScan = async (result: any) => {
+    if (!result || !result[0]) return
+    const id = result[0].rawValue
+
+    if (showVenueModal || scannedId === id) return 
+
+    console.log("📸 Scanned:", id)
+    setScannedId(id)
+    setStatusMessage('🔍 Searching...')
+    
+    // Fetch User AND their current Status
+    const { data, error } = await supabase
         .from('attendees')
         .select('*')
-        .eq('id', text)
+        .eq('id', id)
         .single()
-
-      if (error || !data) {
-        setStatusMessage('❌ INVALID TICKET')
-        // Clear result faster for invalid tickets so you can retry
-        setTimeout(() => setScanResult(null), 2000)
-        return
-      }
-
-      if (data.status === 'checked_in') {
-        setStatusMessage(`⚠️ ALREADY USED by ${data.name}`)
-      } else {
-        // Update database to checked_in
-        await supabase
-          .from('attendees')
-          .update({ status: 'checked_in' })
-          .eq('id', text)
-        
-        setStatusMessage(`✅ SUCCESS! Welcome, ${data.name}`)
-      }
-      
-      // Reset after 3 seconds to allow next person
-      setTimeout(() => {
-        setScanResult(null)
+    
+    if (error || !data) {
+        alert("❌ Ticket not found!")
+        setScannedId(null)
         setStatusMessage('')
-      }, 3000)
+        return
     }
+
+    setDetectedUser(data)
+    setShowVenueModal(true)
+    setStatusMessage('✅ Verify Identity')
   }
 
-  // 3. LOGIN SCREEN (If not authorized)
-  if (!authorized) {
-    return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-black text-white p-4">
-        <h1 className="mb-6 text-2xl font-bold">Staff Access Only</h1>
-        
-        <div className="flex flex-col gap-4 w-full max-w-xs">
-          <input 
-            type="password" 
-            // ADDED "bg-white" HERE:
-            className="bg-white text-black p-3 rounded text-center text-lg border-2 border-gray-500 focus:border-blue-500 outline-none" 
-            placeholder="Enter Admin PIN"
-            value={pin}
-            onChange={(e) => setPin(e.target.value)}
-          />
-          <button 
-            onClick={checkPin} 
-            className="bg-blue-600 p-3 rounded font-bold hover:bg-blue-500 transition-colors text-white"
-          >
-            ENTER
-          </button>
-        </div>
+  // 3. TOGGLE IN / OUT
+  const processScan = async () => {
+    if (!scannedId) return
+
+    // --- TOGGLE LOGIC ---
+    // If 'checked_in' -> Switch to 'checked_out'
+    // If 'checked_out' or NULL -> Switch to 'checked_in'
+    const isInside = detectedUser.status === 'checked_in'
+    const newStatus = isInside ? 'checked_out' : 'checked_in'
+    const typeLabel = isInside ? 'OUT' : 'IN'
+
+    setShowVenueModal(false)
+    setStatusMessage('⏳ Saving...')
+
+    // Time String (Now compatible with the TEXT column)
+    const istNow = new Date().toLocaleString("en-IN", { 
+        timeZone: "Asia/Kolkata",
+        day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true
+    })
+    
+    // A. Update Status in Attendees Table
+    const { error: updateError } = await supabase
+        .from('attendees')
+        .update({ 
+            status: newStatus, 
+            last_scanned_by: adminName, 
+            last_scanned_at: istNow // sending Text
+        })
+        .eq('id', scannedId)
+
+    if (updateError) {
+        console.error("Update Failed:", updateError)
+        alert("Error updating database. Check console.")
+        return
+    }
+
+    // B. Save to History Log
+    await supabase.from('scan_history').insert([{
+        attendee_id: detectedUser.id, 
+        attendee_name: detectedUser.name, 
+        team_name: detectedUser.team_name,
+        scan_type: typeLabel, 
+        venue: venue || 'Main Gate',
+        scanned_by: adminName,
+        scanned_at: istNow
+    }])
+
+    // C. Success Message
+    setStatusMessage(isInside ? `👋 CHECK-OUT SUCCESS: ${detectedUser.name}` : `✅ CHECK-IN SUCCESS: ${detectedUser.name}`)
+    
+    // D. Reset
+    setVenue('') 
+    setDetectedUser(null)
+    setTimeout(() => { 
+        setScannedId(null)
+        setStatusMessage('')
+    }, 3000)
+  }
+
+  // --- UI: LOGIN (Fixed Visibility) ---
+  if (!authorized) return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-900 text-white p-6 relative">
+          <Link href="/" className="absolute top-6 left-6 text-gray-400 hover:text-white font-bold text-lg">← Back</Link>
+          <h1 className="text-3xl font-bold mb-8 uppercase tracking-widest text-blue-400">Staff Login</h1>
+          
+          <div className="w-full max-w-xs space-y-6">
+            <div>
+              <label className="block text-gray-300 mb-2 text-sm font-bold uppercase">Volunteer Name</label>
+              {/* Added bg-white and text-black to make it readable */}
+              <input 
+                className="w-full p-4 rounded-lg text-black font-bold bg-white outline-none focus:ring-4 ring-blue-500" 
+                placeholder="Ex: John Doe" 
+                value={adminName} 
+                onChange={e => setAdminName(e.target.value)} 
+              />
+            </div>
+            
+            <div>
+              <label className="block text-gray-300 mb-2 text-sm font-bold uppercase">Access PIN</label>
+              {/* Added bg-white and text-black here too */}
+              <input 
+                type="password" 
+                className="w-full p-4 rounded-lg text-black font-bold bg-white outline-none tracking-widest focus:ring-4 ring-blue-500" 
+                placeholder="****" 
+                value={pin} 
+                onChange={e => setPin(e.target.value)} 
+              />
+            </div>
+            
+            <button 
+              onClick={handleLogin} 
+              className="w-full bg-blue-600 p-4 rounded-lg font-bold text-white text-lg hover:bg-blue-500 transition-transform active:scale-95 shadow-lg mt-2"
+            >
+              LOGIN
+            </button>
+          </div>
       </div>
-    )
-  }
+  )
 
-  // 4. SCANNER SCREEN (If authorized)
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center p-4">
-      <h1 className="text-xl font-bold mb-4 mt-2">Event Scanner</h1>
-      
-      {/* Camera Viewport */}
-      <div className="w-full max-w-sm aspect-square border-4 border-white rounded-xl overflow-hidden shadow-2xl relative bg-gray-900">
-        <Scanner 
-            onScan={(result) => {
-                if (result && result.length > 0) handleScan(result[0].rawValue)
-            }}
-            styles={{
-              container: { width: '100%', height: '100%' }
-            }}
-        />
-        {/* Overlay Guide Box */}
-        <div className="absolute inset-0 border-2 border-white/30 m-12 pointer-events-none rounded-lg"></div>
+    <div className="min-h-screen bg-black text-white flex flex-col items-center p-4 relative">
+      <div className="w-full flex justify-between mb-4 items-center max-w-sm">
+        <span className="text-gray-400 text-sm">Operator: <span className="text-white font-bold">{adminName}</span></span>
+        <button onClick={() => setAuthorized(false)} className="text-red-400 text-xs border border-red-900 px-3 py-1 rounded hover:bg-red-900">Logout</button>
       </div>
 
-      {/* Status Message Box */}
-      <div className={`mt-6 p-4 w-full max-w-sm text-center rounded-xl border-2 min-h-[100px] flex items-center justify-center transition-all duration-300 ${
-         statusMessage.includes('SUCCESS') ? 'bg-green-900/80 border-green-500' : 
-         statusMessage.includes('ALREADY') ? 'bg-yellow-900/80 border-yellow-500' :
-         statusMessage.includes('INVALID') ? 'bg-red-900/80 border-red-500' :
-         'bg-gray-800 border-gray-600'
-      }`}>
-        <h2 className={`text-xl font-bold ${
-          statusMessage.includes('SUCCESS') ? 'text-green-400' : 
-          statusMessage.includes('ALREADY') ? 'text-yellow-400' : 
-          statusMessage.includes('INVALID') ? 'text-red-400' : 
-          'text-gray-400'
-        }`}>
-          {statusMessage || 'Ready to scan...'}
-        </h2>
+      <div className="w-full max-w-sm aspect-square border-4 border-gray-700 rounded-xl overflow-hidden relative bg-black shadow-2xl">
+        {!showVenueModal && (
+            <Scanner onScan={onScan} styles={{ container: { width: '100%', height: '100%' } }} />
+        )}
       </div>
-      
-      <button 
-        onClick={() => setAuthorized(false)}
-        className="mt-8 text-gray-500 underline text-sm hover:text-white"
-      >
-        Logout
-      </button>
+
+      {/* VERIFICATION MODAL */}
+      {showVenueModal && detectedUser && (
+        <div className="fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4">
+            <div className="bg-white text-black p-6 rounded-xl w-full max-w-xs text-center shadow-2xl relative">
+                
+                <div className="mb-6">
+                    <p className="text-xs text-gray-500 mb-3 font-bold uppercase tracking-widest">Verify Identity</p>
+                    <div className="relative w-32 h-32 mx-auto mb-3">
+                        <img src={detectedUser.photo_url} className="w-full h-full rounded-full object-cover border-4 border-blue-500 shadow-md" alt="User" />
+                    </div>
+                    <h2 className="text-2xl font-extrabold text-gray-900">{detectedUser.name}</h2>
+                    <p className="text-gray-500 text-sm font-semibold">{detectedUser.team_name}</p>
+                    
+                    {/* CURRENT STATUS BADGE */}
+                    <div className={`mt-3 px-3 py-1 rounded-full text-xs font-bold inline-block border ${detectedUser.status === 'checked_in' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-red-100 text-red-600 border-red-200'}`}>
+                        STATUS: {detectedUser.status === 'checked_in' ? 'INSIDE' : 'OUTSIDE'}
+                    </div>
+                </div>
+
+                <div className="text-left mb-4">
+                    <input placeholder="Enter Venue (e.g. Hall A)" autoFocus value={venue} onChange={e => setVenue(e.target.value)} className="w-full border-2 border-gray-300 p-3 rounded-lg text-lg outline-none focus:border-blue-500 font-bold text-center" />
+                </div>
+                
+                {/* DYNAMIC BUTTON - Red for Exit, Green for Entry */}
+                <button 
+                  onClick={processScan} 
+                  className={`w-full text-white font-bold py-4 rounded-lg text-lg shadow-lg transition-all mb-3 ${
+                      detectedUser.status === 'checked_in' 
+                      ? 'bg-red-600 hover:bg-red-500' 
+                      : 'bg-green-600 hover:bg-green-500'
+                  }`}
+                >
+                  {detectedUser.status === 'checked_in' ? '🛑 VERIFY & CHECK OUT' : '✅ VERIFY & CHECK IN'}
+                </button>
+                
+                <button onClick={() => { setShowVenueModal(false); setScannedId(null); setStatusMessage(''); }} className="text-gray-400 text-sm font-bold hover:text-black py-2">Cancel</button>
+            </div>
+        </div>
+      )}
+
+      <div className={`mt-6 w-full max-w-sm p-4 rounded-xl text-center font-bold text-lg border-2 ${
+         statusMessage.includes('SUCCESS') ? 'bg-green-900/90 border-green-500 text-green-100' : 
+         statusMessage.includes('Error') || statusMessage.includes('Invalid') ? 'bg-red-900/90 border-red-500 text-red-100' :
+         'bg-gray-800 border-gray-700 text-gray-400'
+      }`}>
+         {statusMessage || 'Ready to Scan...'}
+      </div>
     </div>
   )
 }
