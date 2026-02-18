@@ -4,27 +4,24 @@ import { supabase } from '@/lib/supabase'
 import { QRCodeSVG } from 'qrcode.react'
 import Link from 'next/link'
 import Webcam from 'react-webcam'
-import { toPng } from 'html-to-image' // New import
+import { toPng } from 'html-to-image'
 
 export default function Home() {
   const [formData, setFormData] = useState({
-    name: '', team_name: '', representative_name: '', contact_number: '', email: '', college_name: ''
+    name: '', team_name: '', representative_name: '', contact_number: '', email: '', college_name: '', event_name: ''
   })
   const [ticket, setTicket] = useState<any>(null)
   const [loading, setLoading] = useState(false)
   
-  // REFS & STATE
-  const ticketRef = useRef<HTMLDivElement>(null) // Ref for the WHOLE pass
+  const ticketRef = useRef<HTMLDivElement>(null)
   const webcamRef = useRef<Webcam>(null) 
   const [image, setImage] = useState<string | null>(null)
   const [showCamera, setShowCamera] = useState(false)
-  const [cameraError, setCameraError] = useState(false)
 
   const handleChange = (e: any) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
   }
 
-  // 1. CAPTURE PHOTO
   const takePhoto = useCallback(() => {
     if (webcamRef.current) {
       const imageSrc = webcamRef.current.getScreenshot() 
@@ -37,48 +34,32 @@ export default function Home() {
     }
   }, [webcamRef])
 
-  // 2. DOWNLOAD FULL PASS (UPDATED)
   const downloadFullPass = async () => {
     if (ticketRef.current === null) return
-    
     try {
-      // Captures the entire div at high quality
       const dataUrl = await toPng(ticketRef.current, { cacheBust: true, pixelRatio: 3 })
       const link = document.createElement('a')
       link.download = `Alliance-Pass-${ticket.name}.png`
       link.href = dataUrl
       link.click()
     } catch (err) {
-      console.error('Download failed', err)
       alert("Could not generate image. Please try a screenshot.")
     }
   }
 
-  // 3. REGISTER
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!image) return alert("Please take a selfie first!")
-    
     setLoading(true)
 
     try {
         const fileName = `${Date.now()}-${formData.name.replace(/\s/g, '')}.jpg`
         const blob = await (await fetch(image)).blob()
-        
-        const { error: uploadError } = await supabase.storage
-            .from('attendee_photos') 
-            .upload(fileName, blob)
-
-        if (uploadError) throw new Error("Photo upload failed: " + uploadError.message)
+        const { error: uploadError } = await supabase.storage.from('attendee_photos').upload(fileName, blob)
+        if (uploadError) throw uploadError
 
         const publicUrl = supabase.storage.from('attendee_photos').getPublicUrl(fileName).data.publicUrl
-
-        const { data, error } = await supabase
-          .from('attendees')
-          .insert([{ ...formData, photo_url: publicUrl, status: 'checked_out' }])
-          .select()
-          .single()
-
+        const { data, error } = await supabase.from('attendees').insert([{ ...formData, photo_url: publicUrl, status: 'checked_out' }]).select().single()
         if (error) throw error
         setTicket(data)
     } catch (err: any) {
@@ -88,19 +69,20 @@ export default function Home() {
     }
   }
 
-  // --- RENDER TICKET ---
   if (ticket) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-100 text-black">
-        {/* ticketRef added here to capture the white box and everything inside */}
-        <div ref={ticketRef} className="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full border-t-4 border-blue-600 relative overflow-hidden">
+        <div ref={ticketRef} className="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full border-t-4 border-blue-600 relative overflow-hidden text-center">
           <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0">
               <img src="/watermark.png" alt="Watermark" className="w-64 h-64 object-contain opacity-50" />
           </div>
 
           <div className="relative z-10">
             <img src="/alliance-banner.jpg" alt="Event Banner" className="w-full h-auto mb-4 rounded-md shadow-sm" />
-            <h2 className="text-xl font-bold text-center text-blue-900 mb-4 tracking-wide uppercase">Official Event Pass</h2>
+            
+            <h2 className="text-xl font-black text-blue-900 tracking-tight uppercase">EVENT PASS</h2>
+            {/* SHASTRA Style: Bold, Normal (not italic), Red */}
+            <p className="text-3xl font-bold text-red-600 mb-4 tracking-widest uppercase">SHASTRA</p>
             
             <div className="flex justify-center mb-4">
                <img src={ticket.photo_url} className="w-28 h-28 rounded-full object-cover border-4 border-blue-100 shadow-md" />
@@ -111,16 +93,16 @@ export default function Home() {
             </div>
 
             <div className="text-center space-y-1 mb-6 border-t pt-4 border-dashed border-gray-300">
-              <p className="text-2xl font-bold text-gray-800">{ticket.name}</p>
-              <p className="text-sm font-semibold text-gray-500">{ticket.team_name}</p>
-              <p className="text-xs font-bold text-blue-600 bg-blue-50 inline-block px-3 py-1 rounded-full">{ticket.college_name}</p>
+              <p className="text-2xl font-bold text-gray-800 uppercase">{ticket.name}</p>
+              <p className="text-sm font-semibold text-gray-500 uppercase">{ticket.team_name}</p>
+              <p className="text-xs font-bold text-blue-600 bg-blue-50 inline-block px-3 py-1 rounded-full uppercase">{ticket.college_name}</p>
+              <p className="block text-sm font-bold text-gray-400 mt-1 uppercase">{ticket.event_name}</p>
             </div>
           </div>
         </div>
 
-        {/* Buttons are OUTSIDE the ref so they aren't included in the download image */}
         <div className="w-full max-w-sm mt-4 space-y-3">
-            <button onClick={downloadFullPass} className="w-full bg-green-600 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2">
+            <button onClick={downloadFullPass} className="w-full bg-green-600 text-white font-bold py-3 rounded-lg shadow-lg flex items-center justify-center gap-2 transition-transform active:scale-95">
               📥 Download Full Pass
             </button>
             <button onClick={() => window.location.reload()} className="w-full text-blue-600 font-bold py-2 hover:bg-gray-50 text-sm">Register Another</button>
@@ -129,12 +111,11 @@ export default function Home() {
     )
   }
 
-  // --- RENDER FORM ---
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-100 relative">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 bg-gray-100 relative text-black">
       <Link href="/scan" className="absolute top-5 right-5 z-50 bg-black text-white px-5 py-2 rounded-full text-sm font-bold shadow-lg">Staff Login →</Link>
       
-      <form onSubmit={handleRegister} className="bg-white rounded-xl shadow-2xl w-full max-w-md mt-10 text-black overflow-hidden border border-gray-200 relative">
+      <form onSubmit={handleRegister} className="bg-white rounded-xl shadow-2xl w-full max-w-md mt-10 overflow-hidden border border-gray-200 relative">
         <img src="/alliance-banner.jpg" alt="Event Banner" className="w-full h-auto object-cover relative z-10" />
 
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-0 mt-32">
@@ -143,7 +124,9 @@ export default function Home() {
 
         <div className="p-8 space-y-5 relative z-10">
             <div className="text-center">
-                <h1 className="text-3xl font-extrabold text-blue-900 uppercase tracking-tight">Event Registration</h1>
+                <h1 className="text-2xl font-black text-blue-900 uppercase tracking-tight">EVENT PASS</h1>
+                {/* SHASTRA Style: Bold, Normal (not italic), Red */}
+                <p className="text-4xl font-bold text-red-600 tracking-widest uppercase">SHASTRA</p>
                 <p className="text-gray-500 font-medium text-sm mt-1">Please fill in your details</p>
             </div>
 
@@ -172,15 +155,16 @@ export default function Home() {
             </div>
 
             <div className="space-y-3">
-                <input name="name" placeholder="Full Name" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-semibold" />
-                <input name="team_name" placeholder="Team Name" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-semibold" />
-                <input name="representative_name" placeholder="Representative Name" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-semibold" />
-                <input name="contact_number" placeholder="Contact Number" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-semibold" />
-                <input name="email" placeholder="Email" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-semibold" />
-                <input name="college_name" placeholder="College / University Name" onChange={handleChange} required className="w-full border-2 border-blue-300 bg-transparent p-3 rounded-lg text-black font-bold" />
+                <input name="name" placeholder="Full Name" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-bold placeholder:text-gray-600 placeholder:font-bold outline-none focus:border-blue-500 uppercase" />
+                <input name="team_name" placeholder="Team Name" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-bold placeholder:text-gray-600 placeholder:font-bold outline-none focus:border-blue-500 uppercase" />
+                <input name="representative_name" placeholder="Team Lead Name" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-bold placeholder:text-gray-600 placeholder:font-bold outline-none focus:border-blue-500 uppercase" />
+                <input name="contact_number" placeholder="Contact Number" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-bold placeholder:text-gray-600 placeholder:font-bold outline-none focus:border-blue-500" />
+                <input name="email" placeholder="Email" onChange={handleChange} required className="w-full border-2 border-gray-300 p-3 rounded-lg text-black bg-transparent font-bold placeholder:text-gray-600 placeholder:font-bold outline-none focus:border-blue-500" />
+                <input name="college_name" placeholder="College / University Name" onChange={handleChange} required className="w-full border-2 border-blue-300 bg-transparent p-3 rounded-lg text-black font-extrabold placeholder:text-blue-800 placeholder:font-bold outline-none focus:border-blue-500 uppercase" />
+                <input name="event_name" placeholder="Event Name" onChange={handleChange} required className="w-full border-2 border-blue-300 bg-[#f0f7ff] p-3 rounded-lg text-black font-extrabold placeholder:text-blue-800 placeholder:font-bold outline-none focus:border-blue-500 uppercase" />
             </div>
 
-            <button disabled={loading} className="w-full bg-blue-600 text-white font-bold p-4 rounded-lg hover:bg-blue-700 shadow-lg">
+            <button disabled={loading} className="w-full bg-blue-600 text-white font-bold p-4 rounded-lg hover:bg-blue-700 shadow-lg transition-transform active:scale-95 uppercase">
             {loading ? 'Generating Pass...' : 'Register Now'}
             </button>
         </div>
