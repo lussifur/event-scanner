@@ -18,7 +18,7 @@ export default function StaffLogin() {
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault()
     // Update this PIN to your new admin pin if needed
-    if (loginData.accessPin === '1234') { 
+    if (loginData.accessPin === '2026') { 
       // Store session data including the new registration no
       localStorage.setItem('volunteer', loginData.volunteerName)
       localStorage.setItem('regNo', loginData.registrationNo)
