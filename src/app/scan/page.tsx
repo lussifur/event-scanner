@@ -26,7 +26,7 @@ export default function ScannerPage() {
   // 1. LOGIN HANDLER
   const handleLogin = () => {
     // Keep your PIN as 2026
-    if (pin === '2026') { 
+    if (pin === '0504') { 
         if (!adminName.trim()) return alert("Please enter your name first.")
         if (!regNo.trim()) return alert("Please enter your registration number.")
         setAuthorized(true)
